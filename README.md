@@ -9,6 +9,7 @@ A web-based IFC model viewer built with [That Open Company](https://thatopen.com
 - **Auto-Focus**: Automatically centers and zooms on the loaded model.
 - **Performance**: Optimized for handling BIM models using fragment technology.
 - **Debugging**: On-screen logger to track loading status and errors.
+- **Selection & Properties**: Click on elements to highlight them and view their properties.
 
 ## Technologies Used
 
@@ -50,3 +51,4 @@ A web-based IFC model viewer built with [That Open Company](https://thatopen.com
     - **Left Click + Drag**: Rotate
     - **Right Click + Drag**: Pan
     - **Scroll**: Zoom
+5.  **Select Elements**: Click on any part of the model to highlight it and view its properties in the side panel. Click on empty space to clear the selection.

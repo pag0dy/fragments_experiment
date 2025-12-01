@@ -1,5 +1,13 @@
 import * as THREE from "three";
 import * as OBC from "@thatopen/components";
+import * as WEBIFC from "web-ifc";
+import * as OBF from "@thatopen/components-front";
+
+// Sidecar WebIFC for property retrieval
+const sidecarWebIfc = new WEBIFC.IfcAPI();
+sidecarWebIfc.SetWasmPath("https://unpkg.com/web-ifc@0.0.72/", true);
+
+let sidecarModelID = 0;
 
 // On-screen logger
 const logContainer = document.getElementById("logs")!;
@@ -69,6 +77,10 @@ world.scene.three.background = null;
 
 const fragments = components.get(OBC.FragmentsManager);
 const ifcLoader = components.get(OBC.IfcLoader);
+const highlighter = components.get(OBF.Highlighter);
+
+highlighter.setup({ world });
+highlighter.zoomToSelection = true;
 
 await ifcLoader.setup({
     wasm: {
@@ -95,7 +107,126 @@ if (world.camera.controls) {
     world.camera.controls.addEventListener("rest", () => {
         fragments.core.update(true);
     });
+
+    world.camera.controls.addEventListener("control", () => {
+        // highlighter.update(); // Removed as it doesn't exist on type
+    });
 }
+
+const propertiesPanel = document.getElementById("properties-panel")!;
+const propertiesContent = document.getElementById("properties-content")!;
+
+highlighter.events.select.onHighlight.add(async (fragmentIdMap) => {
+    console.log("Selected fragment ID map:", fragmentIdMap);
+
+    propertiesContent.innerHTML = "";
+    propertiesPanel.style.display = "none";
+
+    for (const fragmentId in fragmentIdMap) {
+        const expressIds = fragmentIdMap[fragmentId];
+        const model = fragments.list.get(fragmentId);
+        if (!model) continue;
+
+        for (const expressId of expressIds) {
+            propertiesPanel.style.display = "block";
+
+            const title = document.createElement("h4");
+            title.textContent = `ID: ${expressId}`;
+            propertiesContent.appendChild(title);
+
+            try {
+                // Debugging: Inspect model structure
+                console.log("Model keys:", Object.keys(model));
+                if ((model as any).properties) {
+                    console.log("Model has properties object");
+                }
+                if (typeof (model as any).getLocalProperties === 'function') {
+                    console.log("Model has getLocalProperties method");
+                }
+
+                let props: any = null;
+
+                // Method 1: Try sidecar WebIFC (Most reliable)
+                try {
+                    console.log(`Trying sidecar WebIFC.GetLine for model ${sidecarModelID}, expressID ${expressId}...`);
+                    props = sidecarWebIfc.GetLine(sidecarModelID, expressId);
+                } catch (e) {
+                    console.error("Sidecar WebIFC failed:", e);
+                }
+
+                // Method 2: Try getItemAttributes (fallback)
+                if (!props && typeof (model as any).getItemAttributes === 'function') {
+                    console.log("Trying model.getItemAttributes...");
+                    props = await (model as any).getItemAttributes(expressId);
+                }
+
+                // Method 3: Try model.properties (direct access or via method)
+                if (!props && (model as any).properties) {
+                    console.log("Inspecting model.properties:", (model as any).properties);
+                    if (typeof (model as any).properties.getItemProperties === 'function') {
+                        console.log("Trying model.properties.getItemProperties...");
+                        props = await (model as any).properties.getItemProperties(expressId);
+                    } else if ((model as any).properties[expressId]) {
+                        console.log("Trying model.properties[expressId]...");
+                        props = (model as any).properties[expressId];
+                    }
+                }
+
+                // Method 4: Try getLocalProperties (standard for Fragments, but might be minimal)
+                if (!props && typeof (model as any).getLocalProperties === 'function') {
+                    console.log("Trying model.getLocalProperties...");
+                    props = await (model as any).getLocalProperties(expressId);
+                }
+
+                // Method 5: Fallback to webIfc
+                if (!props) {
+                    const webIfc = (ifcLoader as any).webIfc;
+                    if (webIfc && webIfc.wasmModule) {
+                        console.log("Trying webIfc.GetLine...");
+                        const modelId = (model as any).modelID !== undefined ? (model as any).modelID : 0;
+                        props = webIfc.GetLine(modelId, expressId);
+                    }
+                }
+
+                console.log("Retrieved properties:", props);
+
+                if (props) {
+                    const list = document.createElement("ul");
+                    list.style.paddingLeft = "20px";
+
+                    for (const key in props) {
+                        const val = props[key];
+                        if (val === null || val === undefined) continue;
+
+                        let displayVal = val;
+                        if (typeof val === 'object' && val.value !== undefined) {
+                            displayVal = val.value;
+                        } else if (typeof val === 'object') {
+                            // Skip complex objects for now to avoid clutter
+                            continue;
+                        }
+
+                        const item = document.createElement("li");
+                        item.textContent = `${key}: ${displayVal}`;
+                        list.appendChild(item);
+                    }
+                    propertiesContent.appendChild(list);
+                } else {
+                    const p = document.createElement("p");
+                    p.textContent = "No properties found for this element.";
+                    propertiesContent.appendChild(p);
+                }
+            } catch (e) {
+                console.error("Error getting properties:", e);
+            }
+        }
+    }
+});
+
+highlighter.events.select.onClear.add(() => {
+    propertiesPanel.style.display = "none";
+    propertiesContent.innerHTML = "";
+});
 
 const loadBtn = document.getElementById("load-btn")!;
 const fileInput = document.getElementById("file-input") as HTMLInputElement;
@@ -115,6 +246,11 @@ fileInput.addEventListener("change", async (event) => {
 
     console.log("Loading model...");
     try {
+        // Initialize sidecar WebIFC
+        await sidecarWebIfc.Init();
+        sidecarModelID = sidecarWebIfc.OpenModel(data);
+        console.log("Sidecar WebIFC model opened with ID:", sidecarModelID);
+
         const model = await ifcLoader.load(data, true, file.name);
         console.log("Model loaded successfully");
 
